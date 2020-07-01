@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -101,7 +102,7 @@ func main() {
 			}
 		}
 		if publicIP != lastPublicIP {
-			fmt.Println("发现公网IP变化，开始更新")
+			fmt.Println("发现公网IP变化：", publicIP)
 			if err = UpdateRecord(config.recordId, publicIP); err != nil {
 				fmt.Println(err.Error())
 				time.Sleep(time.Duration(config.internal) * time.Second)
@@ -150,7 +151,7 @@ func UpdateRecord(recordId string, publicIP string) (err error) {
 	body.Add("domain", config.domain)
 	body.Add("sub_domain", config.subDomain)
 	body.Add("record_id", recordId)
-	body.Add("record_type", "A")
+	body.Add("record_type", "AAAA")
 	body.Add("record_line", "默认")
 	body.Add("value", publicIP)
 
@@ -238,21 +239,30 @@ type getPublicIPResponse struct {
 	IP string `json:"origin"`
 }
 
-// 获取公网IP,如果出错，返回第二个参数
+// ipv6默认即出口地址，直接从本机网卡取就好了
 func GetPublicIP() (publicIP string, err error) {
 	var (
-		response     *http.Response
-		responseData getPublicIPResponse
+		addrs   []net.Addr
+		addr    net.Addr
+		ipNet   *net.IPNet // IP地址
+		isIpNet bool
 	)
-	if response, err = http.Get("http://www.httpbin.org/ip"); err != nil {
-		err = errors.New("获取公网IP出错,err:" + err.Error())
+	// 获取所有interfaces
+	if addrs, err = net.InterfaceAddrs(); err != nil {
 		return
 	}
-	if err = json.NewDecoder(response.Body).Decode(&responseData); err != nil {
-		err = errors.New("获取公网IP出错,err:" + err.Error())
-		return
+	// 取第一个非lo的网卡IP
+	for _, addr = range addrs {
+		// 这个网络地址是IP地址: ipv4, ipv6
+		if ipNet, isIpNet = addr.(*net.IPNet); isIpNet && !ipNet.IP.IsLoopback() {
+			// 跳过IPV4
+			if ipNet.IP.To4() == nil {
+				publicIP = ipNet.IP.String()
+				return publicIP, nil
+			}
+		}
 	}
-	defer response.Body.Close()
 
-	return responseData.IP, nil
+	return
+
 }
